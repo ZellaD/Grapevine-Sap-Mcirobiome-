@@ -1,0 +1,5 @@
+The following repository is adapted from: Temproal Dynamics of The Sap Microbiome of Grapevine Under High Pierce's Disease Pressure published in Frontiers in Plant Science 2019. Authored by ZellaD and Co Author Philippe E. Rolshausen
+
+This study provides a comprehensive culture-independent microbiome analysis(both bacterial 16S and fungal ITS) from the sap of grapevine overtime and in a context of a vascular disease (Pierce's Disease).
+
+The code to create many of the graphs for this paper can be found in this repository as well as the graphs themselves. 

@@ -1,0 +1,1448 @@
+---
+Title:"Frontiers Microbiology GV Sap microbiome"
+Author: Ella Deyett
+---
+#12.14.2018
+#Get Data
+WD:"/home/ella/Documents/Ella/Aim1/Sap_microbe_frontiersmicrobiology"
+
+Fungal and Bacterial Sap 2016-2018
+
+#Libraries
+
+```{r}
+library(ggplot2)
+library(phyloseq)
+library("knitr")
+library("BiocStyle")
+library("dada2")
+library("gridExtra")
+library("DECIPHER")
+library("plyr")
+library("scales")
+library("VennDiagram")
+library('RVAideMemoire')
+library(microbiome)
+library(seqtime)
+library(ggpubr)
+library(multcomp)
+require(devtools)
+library(vegan)
+library(reshape)
+library("dplyr")
+library("taxa")
+library(agricolae)
+library(ape)
+library('DESeq2')
+library(UpSetR)
+library(tidyr)
+library(RColorBrewer)
+library(stringr)
+library(randomForest)
+
+```
+#Load the Data
+
+
+```{r}
+g<-'graphs/MPMIgraphs/'
+#Raw Data
+bacraw<-readRDS("bacraw_ps.rds")
+funraw<-readRDS("funraw_ps.rds")
+summary(sample_data(bacraw))
+summary(sample_data(funraw))
+
+#Post_severity changes
+bmap<-sample_data(bacraw)
+fmap<-sample_data(funraw)
+write.csv(bmap, 'bmap2.24.2018.csv')
+write.csv(fmap, 'fmap2.24.2018.csv')
+
+
+#Change Vine Severity
+sevchange<-function(x,y,sev){
+	fmap[fmap$Year==x& fmap$RowVine==y,'Severity']<-sev
+	bmap[bmap$Year==x& bmap$RowVine==y,'Severity']<-sev
+	fmap<<-fmap
+	bmap<<-bmap
+}
+sevchange('2016', 'R8V4', 2)
+bmap[bmap$Year=='2016'& bmap$RowVine=='R8V4','Severity']
+sevchange('2017', 'R6V31', 2)
+sevchange('2016', 'R2V39', 1)
+sevchange('2016', 'R2V45', 3)
+sevchange('2016', 'R8V15', 4)
+
+sevchange('2018', 'R2V39', 2)
+sevchange('2018', 'R2V45', 1)
+sevchange('2018', 'R8V15', 3)
+sevchange('2018', 'R8V4', 3)
+
+bmap[, c("Year", "RowVine", "Severity")]
+
+sample_data(bacraw)<-bmap
+sample_data(funraw)<-fmap
+
+
+#saveRDS(bacraw, "bacraw_ps.rds")
+#saveRDS(funraw, "funraw_ps.rds")
+
+
+
+colnames(tax_table(bacraw))<-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+
+
+#Filtered Data
+filtbac<-prune_samples(sample_sums(bacraw)>500, bacraw)
+filtfun<-prune_samples(sample_sums(funraw)>500,funraw)
+filtbac<-prune_taxa(taxa_sums(filtbac)>=3, filtbac)
+filtfun<-prune_taxa(taxa_sums(filtfun)>=3, filtfun)
+sort(sample_sums(filtfun))
+sort(sample_sums(filtbac))
+
+colnames(tax_table(filtbac))
+filtbac
+filtbac<-core(filtbac,0, (2/length(sample_names(filtbac))))
+
+filtfun
+filtfun<-core(filtfun,0,(2/length(sample_names(filtfun))))
+
+
+#Bin Severity rating to three categories
+
+sort(sample_sums(filtbac)) 
+sevbin<-c()
+sevbinf<-c()
+
+sb<-as.numeric(as.character(sample_data(filtbac)$Severity))
+sf<-as.numeric(as.character(sample_data(filtfun)$Severity))
+sb
+sf
+bi_sev<-ifelse(sb>=3, "Severe", "Mild")
+bi_sevF<-ifelse(sf>=3, "Severe", "Mild")
+for(i in 1:length(sb)){
+	if (sb[i]<=2){ sevbin[i]<-"Mild"}
+	else if (sb[i]>=4){sevbin[i]<-"Severe"}
+	else {sevbin[i]<-"Moderate"}}
+
+for(i in 1:length(sf)){
+	if (sf[i]<=2){ sevbinf[i]<-"Mild"}
+	else if (sf[i]>=4){sevbinf[i]<-"Severe"}
+	else {sevbinf[i]<-"Moderate"}}
+
+sample_data(filtfun)$sevbin<-factor(sevbinf, ordered=TRUE, levels=c("Mild", "Moderate", "Severe"))
+sample_data(filtbac)$sevbin<-factor(sevbin, ordered=TRUE, levels=c("Mild", "Moderate", "Severe"))
+sample_data(filtfun)$bi_sev<-factor(bi_sevF, ordered=TRUE, levels=c("Mild", "Severe"))
+sample_data(filtbac)$bi_sev<-factor(bi_sev, ordered=TRUE, levels=c("Mild", "Severe"))
+
+#Edit Sample Data 
+
+levels(sample_data(filtbac)$Season)<-levels(sample_data(filtfun)$Season)
+levels(sample_data(bacraw)$Season)<-levels(sample_data(funraw)$Season)
+sample_data(bacraw)$Year<-as.factor(sample_data(bacraw)$Year)
+sample_data(funraw)$Year<-as.factor(sample_data(funraw)$Year)
+sample_data(filtbac)$Year<-as.factor(sample_data(filtbac)$Year)
+sample_data(filtfun)$Year<-as.factor(sample_data(filtfun)$Year)
+
+
+sample_data(filtfun)$time<-as.factor(paste0(sample_data(filtfun)$Year,sample_data(filtfun)$Season))
+sample_data(filtbac)$time<-as.factor(paste0(sample_data(filtbac)$Year,sample_data(filtbac)$Season))
+sample_data(funraw)$time<-as.factor(paste0(sample_data(funraw)$Year,sample_data(funraw)$Season))
+sample_data(bacraw)$time<-as.factor(paste0(sample_data(bacraw)$Year,sample_data(bacraw)$Season))
+
+
+#Create short hand for time point categories 
+
+t_num<-rep(0,nrow(sample_data(filtbac)))
+map<-sample_data(filtbac)
+fmap<-sample_data(filtfun)
+t_numf<-rep(0, nrow(sample_data(filtfun)))
+timepoints_fun<-function(map, t_num){
+for(i in 1:length(map$time)){
+        if(map$time[i]=="2016Post-Harvest"){t_num[i]<-'1-PH'}
+        else if(map$time[i]=="2017Post-Harvest"){t_num[i]<-'4-PH'}
+        else if(map$time[i]=="2018Post-Harvest"){t_num[i]<-'7-PH'}
+        else if(map$time[i]=="2017Vegetative"){t_num[i]<-'2-B'}
+        else if(map$time[i]=="2017Veraison"){t_num[i]<-'3-V'}
+        else if(map$time[i]=="2018Vegetative"){t_num[i]<-'5-B'}
+        else {t_num[i]<-'6-V'}
+}
+return(t_num)
+
+}
+timepointsF<-timepoints_fun(fmap, t_numf)
+timepointsB<-timepoints_fun(map, t_num)
+
+
+sample_data(filtbac)$timepoints<-as.factor(timepointsB)
+sample_data(filtfun)$timepoints<-as.factor(timepointsF)
+summary(sample_data(filtbac))
+
+
+sort(sample_sums(filtfun))
+sort(sample_sums(filtbac))
+filtbac
+filtfun
+table(sample_data(filtbac)$sevbin)
+table(sample_data(filtbac)$Season)
+table(sample_data(filtfun)$Season)
+sample_data(filtbac)
+
+```
+
+
+#Xylella Prevalence/Incidence 
+
+```{r}
+xf<-'Xylella'
+filtbacg<-tax_glom(filtbac, "Genus")
+
+```
+XF Positive analysis
+```{r}
+xf<-subset_taxa(filtbacg, Genus=="Xylella")
+xf_bi<-data.frame(ifelse(sample_sums(xf)>0,1,0))
+table(xf_bi)
+
+colnames(xf_bi)<- "xf_bi"
+sample_data(filtbac)$Xf_bi<-factor(xf_bi$xf_bi)
+head(sample_data(filtbac))
+
+bmap<-data.frame(sample_data(filtbac))
+fmap<-data.frame(sample_data(filtfun))
+
+
+sample_data(filtbac)$Description<-paste(bmap$Year,bmap$Season,  bmap$RowVine, sep='_') 
+sample_data(filtfun)$Description<-paste(fmap$Year,fmap$Season, fmap$RowVine, sep='_')
+
+xf_bi$Description<-sample_data(filtbac)$Description
+
+
+bmap<-data.frame(sample_data(filtbac))
+fmap<-data.frame(sample_data(filtfun))
+
+fmap<-merge(fmap, xf_bi, by="Description", incomparables=TRUE)
+fmap$X.SampleID<-as.character(fmap$X.SampleID)
+fmap$X.SampleID
+
+length(intersect(sample_data(filtbac)$Description, sample_data(filtfun)$Description))
+mis<-setdiff(sample_data(filtfun)$Description, sample_data(filtbac)$Description)
+sample_names(filtfun)<-sample_data(filtfun)$Description
+
+xffun<-prune_samples(fmap$Description, filtfun)
+rownames(fmap)<-fmap$Description
+
+sample_data(xffun)<-fmap
+colnames(sample_data(xffun))[20]<-"Xf_bi"
+sample_data(xffun)$Xf_bi<-factor(sample_data(xffun)$Xf_bi)
+sample_data(filtbac)$Xf_bi<-factor(sample_data(filtbac)$Xf_bi)
+
+
+table(bmap$Season,bmap$Xf_bi)
+subset(bmap, Season=='Post-Harvest')%>%group_by(sevbin)%>%summarize(n=n())
+
+```
+#The Real Data
+
+#Figure 1: Xantho Bar Charts
+```{r}
+
+#Just analyzed Post-Harvest since that's when severity was taken
+bacragPh<-subset_samples(filtbac, seasonABV=='PH')
+bacragP<-prune_taxa(taxa_sums(bacragPh)>2, bacragPh)
+
+bacragP
+bacragPh<-transform_sample_counts(bacragP, function(x) x/sum(x))
+sample_sums(bacragPh)
+
+
+#Isolate Family of Xylella
+bacragXan<-subset_taxa(bacragPh, Family=='Xanthomonadaceae')
+bacragXan<-tax_glom(bacragXan, "Genus")
+
+Xanmelt<-psmelt(bacragXan)
+xff<-Xanmelt
+xff$sevbin
+xff$RowVine<-as.character(xff$RowVine)
+table(xff$RowVine)
+xff<-subset(xff, RowVine!='R2V50')
+
+
+summary(xff)
+summary(xff$RowVine)
+xff$incidence<-ifelse(xff$Abundance>0, 1,0)
+
+
+
+#Ratio 
+colnames(xff)
+
+ratio<-xff%>%dplyr::group_by(Genus, RowVine, Year,sevbin)%>%dplyr::summarize(count=n(), incidence=sum(incidence)/length(incidence),
+		Abundance=sum(Abundance))
+rat<-ratio%>%spread(Genus, Abundance)%>%mutate(Pseudoxanthomonas=replace_na(Pseudoxanthomonas,0), Stenotrophomonas=replace_na(Stenotrophomonas, 0),
+		Xylella=replace_na(Xylella, 0))%>%group_by(RowVine, Year, sevbin)%>%
+		dplyr::summarize(Pseudoxanthomonas=sum(Pseudoxanthomonas), Stenotrophomonas=sum(Stenotrophomonas), Xylella=sum(Xylella), SdivX=Stenotrophomonas/Xylella)
+rat
+ggscatter(rat, x="Stenotrophomonas", y="Xylella", color="sevbin", size="Year")
+holybXFs<-xff%>%group_by(Genus,sevbin)%>%summarize(count=n(), 
+			inc=sum(incidence)/length(incidence),
+			presAbs=sum(incidence),
+			mean=mean(Abundance,na.rm=TRUE),
+			sd=sd(Abundance, na.rm=TRUE), 
+			median=median(Abundance, na.rm=TRUE),
+			ster=sd(Abundance)/sqrt(n()))
+
+
+
+
+
+holybXFs
+ 
+
+xf<-subset(xff, Genus=="Xylella")
+st<-subset(xff, Genus=="Stenotrophomonas")
+px<-subset(xff, Genus=="Pseudoxanthomonas")
+
+
+```
+
+#Stats on Count of Bacteria
+```{r}
+
+pairwise.wilcox.test(xf$Abundance, xf$sevbin, p.adjust.method='fdr')
+pairwise.wilcox.test(st$Abundance, st$sevbin, p.adjust.method='fdr')
+pairwise.wilcox.test(px$Abundance, px$sevbin, p.adjust.method='fdr')
+
+kruskal.test(Abundance~sevbin, data=xf)
+
+kruskal.test(Abundance~sevbin, data=px)
+kruskal.test(Abundance~sevbin, data=st)
+kruskal.test(Abundance~bi_sev, data=xff)
+
+#Incidence 
+
+
+mycomp<-list(c("High", "Low"), c("High", "Med"), c("Med", "Low"))
+a<-ggplot(holybXFs, aes(x=Genus, y=mean, fill=sevbin))+
+	geom_bar(stat='identity', position=position_dodge(width=1))+
+	scale_fill_grey(start=.1, end=.8,name="Severity")+
+	geom_errorbar(aes(ymax=mean+ster, ymin=mean-ster), size=2, width=.25, position=position_dodge(width=1))+
+	theme_classic()+scale_y_continuous(labels=scales::percent)+labs(x='', y='Relative Abundance')+
+	geom_text(aes(label=paste0("n= ",holybXFs$presAbs),y=mean+(ster),vjust=-.5),position=position_dodge(width=1), size=5)+
+	theme(axis.text.x=element_text(size=24, angle=20, hjust=1), 
+		axis.text.y=element_text(size=24),
+		text=element_text(size=24), legend.position='bottom')
+
+a<-a+geom_text(label="*", x=2.67, y=.0032, size=8)
+a+ggtitle("Mean Relative Abundance and \n Incidence for Family Xanthomonadaceae")+
+	theme(plot.title=element_text(hjust=0.5, size=28))
+
+graph_save<-function(titles){
+	ggsave(paste0(g, titles), dpi=300)}
+
+
+graph_save('Xantho_RA.png')
+
+
+dev.off()
+b<-ggplot(holybXFs, aes(x=Genus, y=incidence, fill=sevbin))+
+	geom_bar(stat='identity', position=position_dodge(width=0.9))+
+	scale_fill_grey(start=.1, end=.8,name="Severity")+
+	theme_classic()+scale_y_continuous(labels=scales::percent)+labs(x='', y='Incidence')+
+	geom_text(aes(label=paste0("n= ",holybXFs$count),y=incidence,vjust=-1),position=position_dodge(width=0.9), size=2.25)+
+	theme(axis.text.x=element_text(angle=45, hjust=1, size=28), 
+		axis.text.y=element_text(size=18),
+		text=element_text(size=18))
+
+compare_means(Abundance~sevbin, data=xff, method='wilcox.test',group.by="Genus")
+grid.arrange(a,b, ncol=2)
+
+
+```
+
+#Alpha Diversity 
+#Num Genera 
+
+```{r}
+
+numgenB<-tax_glom(filtbac, "Family")
+numgenF<-tax_glom(filtfun,"Family")
+fmap<-data.frame(sample_data(filtfun))
+bmap<-data.frame(sample_data(filtbac))
+
+numgenB<-estimate_richness(numgenB, measures="Observed")
+numgenB<-cbind(bmap, numgenB)
+numgenF<-estimate_richness(numgenF, measures="Observed")
+numgenF<-cbind(fmap,numgenF)
+
+
+
+
+set.seed(52)
+#Bacterial Tukey 
+tf<-glm(Observed~RowVine+timepoints, family=poisson, data=numgenB)
+
+tc<-glm(Observed~RowVine+sevbin, family=poisson, data=numgenB)
+summary(tf)
+summary(tc)
+
+bsum<-summary(glht(tf, linfct=mcp(timepoints="Tukey")))
+
+bconsum<-summary(glht(tc,linfct=mcp(sevbin="Tukey")))
+bconsum
+bsum
+
+#Fungal Tukey
+
+tfF<-glm(Observed~RowVine+timepoints,family=poisson, data=numgenF)
+anova(tfF)
+tfcon<-glm(Observed~RowVine+sevbin, family=poisson, data=numgenF)
+Fsum<-summary(glht(tfF, linfct=mcp(timepoints="Tukey")))
+  
+Fconsum<-summary(glht(tfcon, linfct=mcp(sevbin="Tukey")))
+
+#HighV Low over Season
+ps<-numgenF
+tuk_con_time<-function(ps, bisev){
+	FH<-subset(ps, bi_sev==bisev)
+	tff<-glm(Observed~RowVine+timepoints, family=poisson, data=FH)
+	print(bisev)
+	return(summary(glht(tff, linfct=mcp(timepoints="Tukey"))))
+	}
+
+
+#Make the Graph of observed per sample 
+numgenB$colobs<-ifelse(numgenB$Observed> 35, "Red", "Black")
+ggplot(numgenB, aes(x=RowVine, y=Observed, col=colobs))+facet_grid(Season~Year, scales='free')+geom_point(size=4)+scale_color_manual(values=c("grey25", "red"))
+
+
+pairwise.wilcox.test(numgenB$Observed, numgenB$timepoints, p.adjust.method='fdr')
+
+
+
+getNgen<-function(group, titles){  
+
+numAgF<-aggregate(numgenF$Observed, by=list(group=numgenF[,group]),
+	 FUN=function(x) c(means=mean(x), sd=sd(x), n=length(x)))
+numAgB<-aggregate(numgenB$Observed, by=list(group=numgenB[,group]),
+	  FUN=function(x) c(means=mean(x), sd=sd(x), n=length(x)))
+
+numAgF$types<-"Fungi"
+numAgB$types<-"Bacteria"
+com<-intersect(colnames(numAgF), colnames(numAgB))
+numAgF<-numAgF[,com]
+numAgB<-numAgB[,com]
+numAg<<-rbind(numAgF, numAgB)
+
+
+numAg
+numAg<-do.call(data.frame,numAg)
+        colnames(numAg) 
+        numAg
+        numAg$se<-numAg$x.sd/sqrt(numAg$x.n)
+        colnames(numAg)<-c("Times", "Mean", "Sd", "N","types", "se")
+        dodge<-position_dodge(width=0.5)
+        ymax<-numAg$Mean+numAg$se
+        ymin<-numAg$Mean-numAg$se
+        print(ymax)
+        print(ymin)
+        numAg$N<-as.character(numAg$N)
+        numAg$N
+      
+numgenB$types<-"Bacteria"
+numgenF$types<-"Fungal"
+com<-intersect(colnames(numgenB), colnames(numgenF))
+numgenB2<-numgenB[,com]
+numgenF<-numgenF[,com]
+XFs<<-rbind(numgenB2, numgenF)
+print(XFs)
+
+numAg2<<-numAg
+	x<-noquote(group)
+print(	ggplot(numAg, aes(x=numAg[,1], y=Mean,fill=numAg[,1]))+geom_bar(stat='identity')+
+	       	geom_errorbar(aes(ymax=ymax , ymin=ymin), width= 0.25)+
+        	theme_classic()+geom_text(label=paste("N =",numAg$N,sep=' '), aes(y=ymax+3))+
+	        ggtitle(titles)+facet_wrap(~types)
+)
+	
+print(ggplot(XFs, aes(x=alls[,group], y=Observed, color=alls[,group]))+geom_boxplot()+facet_wrap(~types)+
+	geom_smooth(method='glm',  color=alpha('coral2',.5), aes(group=1))+theme_classic()
+)
+print( ggplot(numAg, aes(x=numAg[,1], y=Mean,fill=types, color=types, group=types))+
+		geom_point(aes(size=Mean), shape=23)+geom_line()+theme_classic()+
+		geom_errorbar(aes(ymax=ymax , ymin=ymin), width= 0.25)+
+                theme_bw()+geom_text(label=paste("N =",numAg$N,sep=' '), aes(y=ymax+3))+
+                ggtitle("Fungal and Bacteria Filtered Scatter plots")+
+		scale_color_manual(values=c("chocolate4", "aquamarine4"))+theme_classic()
+)			
+ return(numAg)
+ return(XFs)
+}	
+
+getNgen( "timepoints", "ScaterTime")
+
+fig2<-numAg2
+ymax<-numAg2$Mean+numAg2$se
+ymin<-numAg2$Mean-numAg2$se
+npos<-c((ymin[1:7]-1), (ymax[8:14]+1))
+
+seasonfam<-ggplot(fig2, aes(x=Times, y=Mean,fill=types, group=types))+
+		geom_point(shape=23,size=7)+geom_line(aes(color=types),size=1.5)+theme_classic()+
+		geom_errorbar(aes(ymax=ymax , ymin=ymin,color=types),size=1.5, width= 0.25)+
+                theme_bw()+geom_text(label=paste("N =",fig2$N,sep=' '),size=5,aes(y=npos))+
+               	scale_color_grey(start=.1, end=.5,name='')+
+		scale_fill_grey(start=.1, end=.5, name='')+theme_classic()+
+		theme(axis.text.x=element_text(angle=20, hjust=1, size=24), 
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=24),
+		text=element_text(size=24))+labs(x='', y='')
+
+seasonfam
+allgen<-XFs
+obs_dplyr<-allgen%>%dplyr::group_by(bi_sev,types, timepoints)%>%dplyr::summarize(N=n(),
+	Mean=mean(Observed, na.rm=TRUE),sds=sd((Observed)/sqrt(N),na.rm=TRUE),
+	ymax=Mean+sds, ymin=Mean-sds)
+obs_dplyr
+npos2<-c((obs_dplyr$ymin[1:7]-.5), (obs_dplyr$ymax[8:14]+.5),(obs_dplyr$ymin[15:21]-.5), (obs_dplyr$ymax[22:28]+.5))
+npos2[5]<-36
+obs_dplyr$npos2<-npos2
+obs_dplyr
+table(allgen$RowVine,allgen$sevbin)
+table(allgen$Severity,allgen$bi_sev)
+
+
+
+getNgen("sevbin", "sevbin")
+
+fig2b<-numAg2
+ymaxb<-fig2b$Mean+fig2b$se
+yminb<-fig2b$Mean-fig2b$se
+sigs<-c("A", "B", "C", "A", "B", "A")
+
+
+XFsPH<-subset(XFs, Season=="Post-Harvest")
+XFsPH
+
+#Make N table and Pos
+nposCon<-XFsPH%>%dplyr::group_by(types, sevbin)%>%dplyr::summarize(N=n(),M=mean(Observed),
+	s.e=(sd(Observed)/sqrt(N)),quart3=quantile(Observed)[4], ymin=M-s.e, ymax=M+s.e, SD=sd(Observed), 
+		poss=(quart3*1.5)+1)
+
+
+give.n <- function(x){
+   return(c(y = mean(x), label = length(x)))
+}
+numgensev
+summary(XFsPH)
+
+XFsPH$types<-str_replace(XFsPH$types, pattern="Fungal", "Fungi")
+numgensev<-ggplot(XFsPH, aes(x=sevbin, y=Observed, fill=types))+geom_boxplot(aes(colour=types), alpha=.6)+
+	geom_point(aes(colour=types),size=5,position=position_jitterdodge())+
+
+		theme_classic()+   
+		scale_color_grey()+
+		scale_fill_grey(start=.2, end=.5, name='')+
+		theme(axis.text.x=element_text(angle=20, hjust=1, size=24), 
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=24),
+		text=element_text(size=24), legend.position='none')+labs(x='', y='')
+
+
+		
+numgensev<-numgensev+facet_wrap(~types)
+numgensev
+seasonfam<-seasonfam+theme(legend.position='none')
+fams<-ggarrange(seasonfam, numgensev,nrow=2)
+annotate_figure(fams,left=text_grob("Number of Families", rot=90, size=24))
+set.seed(5)
+
+
+#Statistics on Alpha Diversity
+
+funsub<-subset(XFsPH,types=="Fungi")
+bacsub<-subset(XFsPH, types!="Fungi")
+bacsub<-subset(XFsPH, RowVine!="R2V50")
+
+
+set.seed(1)
+XFcon<-glm(Observed~RowVine+sevbin, family=poisson, data=funsub)
+Fconsum<-summary(glht(XFcon, linfct=mcp(sevbin="Tukey")))
+
+
+BFcon<-glm(Observed~RowVine+sevbin, family=poisson, data=bacsub)
+bconsum<-summary(glht(BFcon, linfct=mcp(sevbin="Tukey")))
+
+bconsum
+Fconsum
+bsum
+Fsum
+
+```
+
+
+
+#Core microbiome 
+#Persistance: Taxa shared over time within and across Communities 
+#Venn Diagrams 	
+```{r}
+
+
+#Venn Diagram: 3-way Year & Season 2-way Condition
+#Venn Diagram for Seaons of Sap
+g_bac<-tax_glom(filtbac, "Genus")
+g_fun<-tax_glom(filtfun, "Genus")
+
+```
+
+
+```{r}
+#Venn for Condition
+
+vennfunCon<-function(psg, titles){    
+ph<-subset_samples(psg,  sevbin=="Severe")
+veg<-subset_samples(psg, sevbin=="Moderate")
+ver<-subset_samples(psg, sevbin=="Mild")
+#Remove taxa that don't occur in threshold amount of samples
+ph<-core(ph, 0, thres)
+veg<-core(veg, 0,thres )
+ver<-core(ver, 0, thres)
+
+#Create Dataframes for easier manipulation
+
+#n1=ph, n2=veg, n3=ver, n4=fal 
+n1fg<<-paste(as.character(data.frame(tax_table(ph))$Family), 
+	as.character(data.frame(tax_table(ph))$Genus), sep='/')
+
+n2fg<<-paste(as.character(data.frame(tax_table(veg))$Family), 
+	as.character(data.frame(tax_table(veg))$Genus), sep='/')
+
+n3fg<<-paste(as.character(data.frame(tax_table(ver))$Family), 
+	as.character(data.frame(tax_table(ver))$Genus), sep='/')
+
+n1<<-as.character(data.frame(tax_table(ph))$Genus)
+
+n2<<-as.character(data.frame(tax_table(veg))$Genus)
+
+n3<<-as.character(data.frame(tax_table(ver))$Genus)
+
+
+#Find Intersections
+n1a<-length(n1)
+n2a<-length(n2)
+n3a<-length(n3)
+
+n12<<-intersect(n1,n2)
+n13<<-intersect(n1,n3)
+n23<<-intersect(n2,n3)
+
+n123<<-intersect(n12,n3)
+
+#Find Common Taxa
+nameit<-paste0(titles,"genera_in_XF")
+tax<<-data.frame(tax_table(psg))
+
+
+tax<-tax[tax$Genus%in%n123,]
+pies<-prune_taxa(rownames(tax), psg)
+tax$Abund<-taxa_sums(pies)/nsamples(pies)
+write.table(tax, paste0(g,nameit,".csv"), sep=",", row.names=FALSE, col.names=FALSE)
+
+#The taxa
+print(paste0("N1: ",n1a))
+print(paste0("N2: ",n2a))
+print(paste0("N3: ",n3a))
+}
+
+#Fungal
+
+thres=.5
+g_funraw_ph<-subset_samples(g_fun,Season=="Post-Harvest")
+g_bacraw_ph<-subset_samples(g_bac,Season=="Post-Harvest")
+g_bacraw_ph<-subset_samples(g_bacraw_ph,RowVine!="R2V50")
+
+
+g_funraw_ph
+g_bacraw_ph
+
+vennfunCon(g_funraw_ph, "Fungal_vennCondition")
+hf<-n1
+medf<-n2
+lowf<-n3
+hf
+
+#Bacteria
+vennfunCon(g_bacraw_ph, "Bacter_vennCondition")
+hb<-n1
+medb<-n2
+lowb<-n3
+
+n1<-c(hf,hb)
+n2<-c(medf,medb)
+n3<-c(lowf, lowb)
+
+n1
+n2
+n3
+
+
+
+
+
+#Bacteria
+filtbac_gen<-tax_glom(g_bacraw_ph, "Genus")
+filtbac_gen<-transform_sample_counts(filtbac_gen, function(x) x/sum(x))
+
+bacgen_melt<-psmelt(filtbac_gen)
+
+
+allthem<-unique(c(n1,n2,n3))
+bacsub<-bacgen_melt%>%subset(Genus%in%allthem)
+#bacsub<-bacgen_melt
+unique(bacsub$Genus)
+
+#Fungal
+filtfun_gen<-tax_glom(g_funraw_ph, "Genus")
+filtfun_gen<-transform_sample_counts(filtfun_gen, function(x) x/sum(x))
+
+fungen_melt<-psmelt(filtfun_gen)
+funsub<-fungen_melt%>%subset(Genus%in%allthem)
+#funsub<-fungen_melt
+unique(funsub$Genus)
+
+
+#Make tables 
+setdiff(colnames(bacsub),colnames(funsub))
+dim(bacsub)
+dim(funsub)
+combo<-full_join(bacsub, funsub)
+dim(combo)
+
+
+#Add Presence Abscence
+combo$pres<-ifelse(combo$Abundance>0,1,0)
+combo$Genus
+colnames(combo)
+combo$Season
+sta<-combo%>%dplyr::group_by(Genus,sevbin)%>%dplyr::summarize(counts=n(), prev=sum(pres)/n()*100,bin=ifelse(prev>50,1,0),
+	 incidence=sum(pres), abund=mean(Abundance))
+ sta
+sta2<-sta%>%spread(sevbin,bin)
+sta2
+gen<-sta2$Genus
+gen
+sta2$Genus<-str_replace(gen, pattern='g__', replacement='')
+colnames(sta2)
+
+sta2<-sta2%>%mutate(Mild=replace_na(Mild, 0), Moderate=replace_na(Moderate, 0), 
+	Severe=replace_na(Severe, 0))
+sta2
+sta2<-sta2%>%dplyr::group_by(Genus)%>%dplyr::summarize(counts=sum(counts),
+	Mild=sum(Mild),Moderate=sum(Moderate), Severe=sum(Severe), RA=mean(abund), prev=sum(incidence), colpat=sum(ifelse(Mild>0,1,0),ifelse(Moderate>0,2,0), ifelse(Severe>0,5,0)))
+sta2$inc<-(sta2$prev/sta2$counts)
+sta2$fac<-ifelse(sta2$RA>.1, "High", "Low")
+table(sta2$colpat)
+mydata=sta2
+sta2<-data.frame(sta2)
+colnames(sta2)
+head(sta2)
+myplot<-function(mydata,x,y){
+
+mydata2<-mydata%>%subset(fac=="High")
+	high<-ggdotchart(mydata2,x="Genus", y="RA", color='color',group='colpat',
+	dot.size=12,add="segments", 
+	label=round((mydata2[,"RA"]*100),1),
+	font.label=list(color="black", size=12, vjust=0.5),
+	add.params= list(color='color',size=4))+
+	theme(strip.background=element_blank(), 
+	strip.text.x=element_blank())+
+        rotate_x_text(25, vjust=1)+
+	labs(x=' ', y='Relative Abundance')+
+	scale_y_continuous(labels=scales::percent)+scale_color_identity()+
+	theme(axis.text.x=element_text(size=24), 
+	axis.text.y=element_text(size=24),axis.title.y=element_text(size=24),
+	text=element_text(size=24), legend.position='none')
+mydata3<-mydata%>%subset(fac!="High")
+	low<-
+ggdotchart(mydata3,x="Genus", y="RA", color='color',group='colpat',
+	dot.size=12,add="segments", 
+	label=round((mydata3[,"RA"]*100),1),
+	font.label=list(color="black", size=12, vjust=0.5),
+	add.params= list(color='color',size=4))+
+	theme(strip.background=element_blank(), 
+	strip.text.x=element_blank())+
+        rotate_x_text(25, vjust=1)+
+	labs(x=' ', y='Relative Abundance')+
+	scale_y_continuous(labels=scales::percent)+scale_color_identity()+
+ 	theme(axis.text.x=element_text(size=24), 
+	axis.text.y=element_text(size=24),axis.title.y=element_text(size=24),
+	text=element_text(size=24), legend.position='none')
+
+
+
+plot<-grid.arrange(arrangeGrob(high, low, widths=c(1,3)))
+}
+
+Bcols<-brewer.pal(9, "RdYlGn")
+show_col(Bcols)
+
+
+gen<-str_replace(sta2$Genus, pattern='g__', replacement='')
+gen
+sta2$Genus<-gen
+
+ppi<-600
+
+upcon<-upset(sta2, main.bar.color = "black",point.size=3.5,order.by='freq',
+	text.scale=c(2.2,2.2,2,2,2.2,2),
+	 queries = list(list(query = intersects, params = list("Severe"), color = Bcols[1], active = T),
+	list(query = intersects, params = list("Moderate"), color=Bcols[4],active = T), 
+	list(query = intersects, params = list("Mild"), color =Bcols[9], active = T),
+	list(query = intersects, params = list('Moderate',"Mild"), color = Bcols[7], active = T), 
+	list(query = intersects, params = list("Moderate","Severe"), color = Bcols[2], active = T), 
+   	list(query = intersects, params = list("Mild", "Severe", "Moderate"), color = "#999999", active = T)),
+	attribute.plots = list(gridrows = 150,plots = list(list(plot = myplot, x = "Genus", 
+        y = "RA",queries =T)))) 
+	
+grid.text("Disease Prevalence Venn Diagram and Relative Abundance of Genera", x=0.50, y=.025, gp=gpar(fontsize=28))
+
+
+
+
+
+```
+
+
+#lets get Upset
+
+```{r}
+#Season
+
+#Venn for Season
+vennfun<-function(psg, thresh){    
+ph<-subset_samples(psg,  Season=="Post-Harvest")
+veg<-subset_samples(psg, Season=="Vegetative")
+ver<-subset_samples(psg, Season=="Veraison")
+#Remove taxa that don't occur in threshold amount of samples
+ph<-core(ph, 0, thres)
+veg<-core(veg, 0,thres )
+ver<-core(ver, 0, thres)
+
+#Create Dataframes for easier manipulation
+#n1=ph, n2=veg, n3=ver, n4=fal 
+n1fg<<-paste(as.character(data.frame(tax_table(ph))$Family), 
+	as.character(data.frame(tax_table(ph))$Genus), sep='/')
+
+n2fg<<-paste(as.character(data.frame(tax_table(veg))$Family), 
+	as.character(data.frame(tax_table(veg))$Genus), sep='/')
+
+n3fg<<-paste(as.character(data.frame(tax_table(ver))$Family), 
+	as.character(data.frame(tax_table(ver))$Genus), sep='/')
+
+n1<<-as.character(data.frame(tax_table(ph))$Genus)
+
+n2<<-as.character(data.frame(tax_table(veg))$Genus)
+
+n3<<-as.character(data.frame(tax_table(ver))$Genus)
+
+}
+#Fungal
+
+
+vennfun(g_fun,.5)
+
+phf<-n1
+vegf<-n2
+verf<-n3
+set.seed(5)
+vennfun(g_bac,.5)
+phb<-n1
+vegb<-n2
+verb<-n3
+phb
+vegb
+verb
+n1<-c(phf,phb)
+n2<-c(vegf,vegb)
+n3<-c(verf, verb)
+
+allthem<-unique(c(n1,n2,n3))
+allthem
+
+#Bacteria
+filtbac_gen<-tax_glom(filtbac, "Genus")
+filtbac_gen<-transform_sample_counts(filtbac_gen, function(x) x/sum(x))
+
+bacgen_melt<-psmelt(filtbac_gen)
+bacsub<-bacgen_melt%>%subset(Genus%in%allthem)
+#bacsub<-bacgen_melt
+unique(bacsub$Genus)
+
+#Fungal
+filtfun_gen<-tax_glom(filtfun, "Genus")
+filtfun_gen<-transform_sample_counts(filtfun_gen, function(x) x/sum(x))
+
+fungen_melt<-psmelt(filtfun_gen)
+funsub<-fungen_melt%>%subset(Genus%in%allthem)
+#funsub<-fungen_melt
+unique(funsub$Genus)
+
+
+#Make tables 
+setdiff(colnames(bacsub),colnames(funsub))
+dim(bacsub)
+dim(funsub)
+combo<-full_join(bacsub, funsub)
+dim(combo)
+
+
+#Add Presence Abscence
+combo$pres<-ifelse(combo$Abundance>0,1,0)
+combo$Genus
+colnames(combo)
+combo<-combo[,c(1:3,10,17,21,27,31,32)]
+sta<-combo%>%dplyr::group_by(Genus,Season)%>%dplyr::summarize(counts=n(), prev=sum(pres)/n()*100,bin=ifelse(prev>50,1,0),
+	 incidence=sum(pres), abund=mean(Abundance))
+sta
+sta2<-sta%>%spread(Season,bin)
+sta2
+gen<-sta2$Genus
+gen
+sta2$Genus<-str_replace(gen, pattern='g__', replacement='')
+colnames(sta2)[6]<-'PH'
+sta2<-sta2%>%mutate(PH=replace_na(PH, 0), Vegetative=replace_na(Vegetative, 0), 
+	Veraison=replace_na(Veraison, 0))
+sta2
+sta2<-sta2%>%dplyr::group_by(Genus)%>%dplyr::summarize(counts=sum(counts),
+	PH=sum(PH),B=sum(Vegetative), V=sum(Veraison), RA=mean(abund), prev=sum(incidence), colpat=sum(ifelse(PH>0,1,0), ifelse(B>0,2,0), ifelse(V>0,5,0)))
+sta2$inc<-(sta2$prev/sta2$counts)
+
+sta2<-data.frame(sta2)
+sta2$fac<-ifelse(sta2$RA>.1, "High", "Low")
+
+
+Scols<-brewer.pal(9, "Set1")
+
+ppi<-600
+
+
+#Make the Upset Graph 
+
+upset(sta2, main.bar.color = "black",point.size=3.5,order.by='freq',
+	text.scale=c(1.2,1,1,1,1.2,1),
+	 queries = list(list(query = intersects, params = list("PH"), color = Scols[1], active = T),
+	list(query = intersects, params = list("V"), color=Scols[2],active = T), 
+	list(query = intersects, params = list("B"), color = Scols[6], active = T), 
+	list(query = intersects, params = list("PH","B"), color = Scols[5], active = T), 
+	list(query = intersects, params = list('V',"B"), color = Scols[3], active = T), 
+	list(query = intersects, params = list("V","PH"), color = Scols[4], active = T), 
+   	list(query = intersects, params = list("B", "PH", "V"), color = Scols[9], active = T)), 
+	attribute.plots = list(gridrows = 200,plots = list(list(plot = myplot, x = "Genus", 
+        y = "RA",queries =T))))
+
+
+
+```
+
+#Sunburst Phylogeny 
+
+```{r}
+
+#source('SunburstR.rmd')
+
+```
+
+
+#BetaDiv
+
+```{r}
+filtbac
+filtfun
+
+filtbac2<-filtbac
+filtfun2<-filtfun
+
+fmap<-sample_data(filtfun2)
+bmap<-sample_data(filtbac2)
+
+Wunifr<-ordinate(filtbac2, "PCoA", "unifrac", weighted=TRUE)
+
+brayf<-ordinate(filtfun2, "NMDS", "bray")
+pal<-viridis_pal(option='D')(10)
+
+pal2<-c(pal, viridis_pal(option='B')(10))
+
+show_col(pal2)
+bacbeta<-plot_ordination(filtbac2, Wunifr,color="Year")+   
+	geom_point(mapping=aes(shape=Season), size=8)+
+	scale_shape_manual("Season",values=c(17,10,3),labels=c("Post-Harvest", "Bloom", "Veraison"))+
+	scale_size_manual("Severity",values=c(2,7))+
+	theme_classic()+
+	geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	scale_color_manual(values=pal2[c(11,6,17)])+
+	theme(axis.text.x=element_text(size=24), legend.text=element_text(size=24),
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=18),
+		axis.title.x=element_text(size=18),
+		text=element_text(size=24), plot.title=element_text(size=24))+
+		ggtitle("Beta Diversity: Weighted Unifrac PCoA \n of Bacteria  and Bray-Curtis NMDS of Fungi")
+
+
+funbeta<-plot_ordination(filtfun2, brayf, color="Year")+
+	geom_point(mapping=aes(shape=Season), size=8)+
+	scale_shape_manual("Season",values=c(17,10,3), labels=c("Post-Harvest", "Bloom", "Veraison"))+
+	scale_size_manual("Severity", values=c(2,7))+
+	theme_classic()+geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	scale_color_manual(values=pal2[c(11,6,17)])+
+	theme(axis.text.x=element_text(size=24),legend.text=element_text(size=24), 
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=18),axis.title.x=element_text(size=18),
+		text=element_text(size=24))
+
+
+ggarrange(bacbeta, funbeta, common.legend=TRUE, nrow=2, legend='right')
+
+
+
+#Hypothesis testing: differences in Centroids & Homogeneity of dispersion Test
+set.seed(1)
+
+#Season
+	
+
+filtbacW<-phyloseq::distance(filtbac2, method="unifrac", weighted=TRUE)
+filtfunbray<-phyloseq::distance(filtfun2, method='bray')
+
+bacmap<-data.frame(sample_data(filtbac2))
+funmap<-data.frame(sample_data(filtfun2))
+
+adonis(filtbacW~timepoints, data=bacmap, method='unifrac', strata=bacmap$RowVine)
+set.seed(52)
+adonis(filtbacW~Season, data=bacmap, method='unifrac', strata=bacmap$RowVine)
+adonis(filtbacW~Year, data=bacmap, method='unifrac', strata=bacmap$RowVine)
+
+
+adonis(filtfunbray~timepoints, data=funmap, strata=funmap$RowVine)
+
+adonis(filtfunbray~Season, data=funmap, strata=funmap$RowVine)
+adonis(filtfunbray~Year, data=funmap, strata=funmap$RowVine)
+
+#Pairwise statistics
+pairwise.perm.manova(filtfunbray, funmap$timepoints)
+pairwise.perm.manova(filtfunbray, funmap$Season)
+pairwise.perm.manova(filtfunbray, funmap$Year)
+
+
+pairwise.perm.manova(filtbacW, bacmap$Season)
+pairwise.perm.manova(filtbacW, bacmap$timepoints)
+pairwise.perm.manova(filtbacW, bacmap$Year)
+
+```
+
+# Beta Diversity on Condition
+```{r}
+
+filtfunph<-subset_samples(filtfun, Season=='Post-Harvest')
+bacragPh<-subset_samples(filtbac, Season=='Post-Harvest')
+table(sample_data(filtfunph)[,c("ConditionColor", "Severity")])
+
+
+
+#Redefine Condition Color 
+fmap<-data.frame(sample_data(filtfunph))
+bmap<-data.frame(sample_data(bacragPh))
+bmap$Severity<-as.numeric(as.character(bmap$Severity))
+
+
+CCchange<-function(y,Cc){
+        
+	print(fmap[fmap$RowVine==y,'ConditionColor'])
+	fmap[fmap$RowVine==y,'ConditionColor']<-Cc
+         bmap[bmap$RowVine==y,'ConditionColor']<-Cc
+         fmap<<-fmap
+         bmap<<-bmap
+	print(fmap[fmap$RowVine==y,'ConditionColor'])
+ }
+
+CCchange('R2V38', "Yellow")
+CCchange('R8V15', "Red")
+CCchange("R8V4", "Green")
+table(bmap[,c("RowVine", "ConditionColor")])
+colSums(table(fmap[,c("RowVine", "ConditionColor")]))/3
+
+sample_data(bacragPh)<-bmap
+sample_data(filtfunph)<-fmap
+sample_data(filtfunph)[,c("RowVine", "ConditionColor")]
+filtfunph<-prune_taxa(taxa_sums(filtfunph)>0,filtfunph)
+bacragPh<-prune_taxa(taxa_sums(bacragPh)>0, bacragPh)
+#bacragPh<-prune_samples(sample_sums(bacragPh)>500, bacragPh)
+sort(sample_sums(bacragPh))
+less3<-names(which(table(sample_data(bacragPh)$RowVine)<2))
+less3
+bacragPh3<-bacragPh
+bacragPh3<-subset_samples(bacragPh3, RowVine!=less3[1])#&RowVine!=less3[2])
+
+
+less3<-names(which(table(sample_data(filtfunph)$RowVine)<2))
+less3
+filtfunph3<-filtfunph
+
+filtfunph3
+bacragPh3
+table(sample_data(bacragPh3)$RowVine)
+table(sample_data(filtfunph3)$RowVine)
+
+#Reorder Factors
+sample_data(bacragPh3)$Severity<-factor(sample_data(bacragPh3)$Severity, 
+	ordered=TRUE)
+
+sample_data(bacragPh3)$Year<-factor(sample_data(bacragPh3)$Year, ordered=TRUE, levels=c("2016", "2017", "2018"))
+
+sample_data(filtfunph3)$Severity<-factor(sample_data(filtfunph3)$Severity, 
+	ordered=TRUE)
+
+sample_data(filtfunph3)$Year<-factor(sample_data(filtfunph3)$Year, ordered=TRUE, levels=c("2016", "2017", "2018"))
+
+set.seed(15)
+
+
+
+#Ordinate
+filtbacW<-phyloseq::distance(bacragPh3, method="unifrac", weighted=TRUE)
+
+filtfunbray<-phyloseq::distance(filtfunph3, method='bray')
+
+bacmap<-data.frame(sample_data(bacragPh3))
+
+funmap<-data.frame(sample_data(filtfunph3))
+set.seed(24)
+
+#Statistics 
+adonis(filtbacW~ConditionColor+Year, data=bacmap, method='unifrac',strata=bacmap$RowVine)
+
+set.seed(24)
+adonis(filtbacW~sevbin+Year+sevbin*Year, data=bacmap, method='unifrac',strata=bacmap$RowVine)
+
+set.seed(24)
+adonis(filtbacW~Severity+Year+Severity*Year, data=bacmap, method='unifrac',strata=bacmap$RowVine)
+
+ 
+adonis(filtfunbray~sevbin+Year, data=funmap, strata=funmap$RowVine)
+#interaction sig so removed
+adonis(filtfunbray~Year, data=funmap, strata=funmap$RowVine)
+adonis(filtfunbray~Severity+Year, data=funmap, strata=funmap$RowVine)
+
+
+#no interaction sig so removed
+beta<-betadisper(filtfunbray, funmap$bi_sev)
+permutest(beta)
+
+#Pariwise Permmanova
+	#Bac
+		pairwise.perm.manova(filtbacW, bacmap$Severity)
+		pairwise.perm.manova(filtbacW, bacmap$sevbin)
+		pairwise.perm.manova(filtbacW, bacmap$ConditionColor)
+	#Fun
+		pairwise.perm.manova(filtfunbray, funmap$Severity)
+		pairwise.perm.manova(filtfunbray, funmap$sevbin)
+		pairwise.perm.manova(filtfunbray, funmap$ConditionColor)
+#Graphs
+set.seed(15)
+
+pal<-viridis_pal(option="viridis", end=.9)(5)
+show_col(pal)
+wuni<-ordinate(bacragPh3,"PCoA", 'unifrac', weighted=TRUE)
+
+simp<-c()
+maps<-sample_data(bacragPh3)
+for(i in 1:length(maps$ConditionColor)){
+	if(maps$ConditionColor[i]=="Green"){simp[i]<-"Healthy Vine"}
+	else if (maps$ConditionColor[i]=="Red"){simp[i]<-"Diseased Vine"}
+	else {simp[i]<-"Variable"}
+}
+
+maps$ConditionColor
+maps$CCsimp<-simp
+maps[,c("RowVine", "CCsimp")]
+
+show_col(Bcols)
+sample_data(bacragPh3)<-maps
+colnames(maps)
+set.seed(45)
+
+sample_data(bacragPh3)$Severity<-as.numeric(sample_data(bacragPh3)$Severity)
+bacbetaSep<-  
+       plot_ordination(bacragPh3, wuni)+ 
+	geom_path(aes(group=RowVine),size=.7,color='black',alpha=0.25,show.legend=FALSE)+
+	geom_point(size=4, aes(color=Severity, shape=Year))+facet_wrap(~CCsimp)+
+	scale_linetype_manual(values=c("solid", "dotted", "longdash"))+
+	scale_color_gradient2("Severity",low=Bcols[9], mid=Bcols[4], high=Bcols[1],
+			midpoint=3, labels=c("Mild", "", "Moderate", "", "Severe"))+
+	theme_classic()+geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	theme(axis.text.x=element_text(size=28),legend.text=element_text(size=18), 
+		axis.text.y=element_text(size=18),axis.title.y=element_text(size=28),
+		text=element_text(size=18))
+
+
+
+bacbetaAll<-
+       plot_ordination(bacragPh3, wuni)+ 
+	geom_point(size=8, aes(color=Severity, shape=Year))+
+	scale_color_gradient2("Severity",low=Bcols[9],mid=Bcols[4], high=Bcols[1],
+			midpoint=3, labels=c("Mild", "", "Moderate", "", "Severe"))+
+	theme_classic()+geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	theme(axis.text.x=element_text(size=24),legend.text=element_text(size=24),
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=24), plot.title=element_text(size=28, hjust=.5),
+		text=element_text(size=24))+ggtitle("Beta Diversity:(A) Weighted Unifrac PCoA \n of Bacteria  (B)Bray-Curtis NMDS of Fungi")
+
+grid.arrange(bacbetaAll,bacbetaSep, ncol=2)  
+
+
+sample_data(filtfunph3)$Severity<-as.numeric(sample_data(filtfunph3)$Severit)
+filtfunph3
+phf<-filtfunph3
+sort(sample_sums(phf))
+set.seed(50)
+brayf<-ordinate(phf, "NMDS", "bray")
+
+
+simp<-c()
+maps<-sample_data(phf)
+for(i in 1:length(maps$ConditionColor)){
+	if(maps$ConditionColor[i]=="Green"){simp[i]<-"Healthy Vine"}
+	else if (maps$ConditionColor[i]=="Red"){simp[i]<-"Diseased Vine"}
+	else {simp[i]<-"Variable"}
+}
+
+maps$ConditionColor
+simp
+maps$CCsimp<-simp
+
+
+
+
+
+table(maps$RowVine, maps$CCsimp)
+sample_data(phf)<-maps
+colnames(maps)
+	funbetaSep<-
+	plot_ordination(phf, brayf)+
+	geom_path(aes(group=RowVine),color="Black",size=.7,alpha=0.25,show.legend=FALSE)+
+	geom_point(size=4, aes(color=Severity, shape=Year))+facet_wrap(~CCsimp)+
+	scale_linetype_manual(values=c("solid", "dotted", "longdash"))+
+	scale_color_gradient2("Severity",low=Bcols[9],mid=Bcols[4], high=Bcols[1],
+			midpoint=3, labels=c("Mild", "", "Moderate", "", "Severe"))+
+	theme_classic()+geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	theme(axis.text.x=element_text(size=28), legend.text=element_text(size=18),
+		axis.text.y=element_text(size=18),axis.title.y=element_text(size=28),
+		text=element_text(size=18))
+
+	
+	funbetaAll<-
+	plot_ordination(phf, brayf)+
+	geom_point(size=8, aes(color=Severity, shape=Year))+
+	scale_color_gradient2("Severity",low=Bcols[9],mid=Bcols[4], high=Bcols[1],
+			midpoint=3, labels=c("Mild", "", "Moderate", "", "Severe"))+
+	theme_classic()+geom_vline(xintercept=0, colour='grey70')+geom_hline(yintercept=0, color='grey70')+
+	theme(axis.text.x=element_text(size=24), legend.text=element_text(size=24),
+		axis.text.y=element_text(size=24),axis.title.y=element_text(size=24),
+		text=element_text(size=24))
+
+
+bacbetaAll+theme(legend.position='none')
+ggarrange(bacbetaAll,funbetaAll,common.legend=TRUE, nrow=2,legend='right')	
+
+
+```
+#Conditional Changes 
+
+
+
+#Random Forest
+```{r}
+
+set.seed(24)
+
+
+
+filtbac
+filtfun
+
+ps<-filtbac
+group<-"Season" 
+nn<-20
+treen=600
+mtai=50
+geo_mean <- function(x, na.rm=TRUE) {
+    exp(sum(log(x[x>0]), na.rm=na.rm)/length(x))}
+
+
+
+
+#Log Transform and data set up
+   	RFfun<-function(ps, group,nn, treen){ 
+		set.seed(2)
+		#Filter out rares
+		ps<-core(ps, 10, 2/nsamples(ps))	
+		print(ps)
+		baclog<<-transform_sample_counts(ps, function(x) log(1+x))
+	
+		ab<-print(qplot(log10(rowSums(otu_table(ps))),binwidth=0.2)+xlab("log counts/sample")+
+				ggtitle(paste0("Random Forest log plot of ",group)))
+
+		#make Data 
+			year<-sample_data(baclog)[,"Year"]
+			cats<-sample_data(baclog)[,group]
+		sevbinASV<<-data.frame(cats, otu_table(baclog))
+
+      	#RandomForest
+		mt<-ntaxa(ps)
+		RFfit<<-randomForest(sevbinASV[,1]~., data=sevbinASV, ntree=treen, mtry=mt/5)
+		print(RFfit)
+		
+	#Driver Microbes 
+
+	#Top Driver
+	print(as.vector(tax_table(baclog)[which.max(RFfit$importance),c("Family", "Genus")]))
+
+	topasv<-importance(RFfit)
+
+	namess<-paste0(tax_table(baclog)[,"Family"],"_", tax_table(baclog)[,"Genus"])
+	topasv<-data.frame(predictors=rownames(topasv), topasv)
+
+	topasv<-arrange(topasv, desc(MeanDecreaseGini))
+	topasv$predictors<-as.factor(topasv$predictors)
+	top20<-topasv[1:nn,]
+
+
+	#Heat Map of predictors
+	melts<-psmelt(baclog)
+	topmelts<-melts%>%subset(OTU%in%top20$predictors)
+	topmelts$nams<-paste0(topmelts$Family, "_", topmelts$Genus)	
+	topmelts_binned<-topmelts%>%group_by(nams,topmelts[,group])%>%summarize(Abundance=mean(Abundance))	
+        topmelts_binned$nams<-str_replace(topmelts_binned$nams, "f__", "")
+ 	topmelts_binned$nams<-str_replace(topmelts_binned$nams, "g__", "")	
+ 	topmelts_binned$nams<-str_replace(topmelts_binned$nams, "Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium", "Rhizobium")	
+
+	colnames(topmelts_binned)[2]<-"Variable"
+	heat_RF<<-ggplot(topmelts_binned,aes(y=nams,x=Variable, fill=Abundance))+
+		geom_tile(size=1)+coord_equal()+
+		scale_fill_gradient2("Log Abundance",low=pal2[5],mid= "white",
+			midpoint=mean(topmelts_binned$Abundance), high=pal2[17])+labs(x='', y='')+
+        	theme(axis.text.x=element_text(angle=90, hjust=1,size=18, color="black"),axis.line=element_blank(),
+			legend.text=element_text(size=18),axis.text.y=element_text(size=12, color='black'),
+			plot.margin=unit(c(0,0,0,0), "cm"),panel.grid.major=element_blank(), 
+			panel.grid.minor=element_blank(),panel.background=element_blank())
+	outtab<<-topmelts_binned
+			
+}       		
+	RFfun(filtbac, "Season", 11, 2000)  
+	
+		RFtab<-outtab
+		RFtab$Variable<-factor(RFtab$Variable, levels=c("Vegetative", "Veraison", "Post-Harvest"))
+		RFtab$Variable<-factor(RFtab$Variable, labels=c("Bloom", "Veraison", "Post-Harvest"))
+	        RFtab$nams
+		RFtab$nams<-sapply(strsplit(RFtab$nams, "_"), '[',2)
+		RFtab$nams[7:9]<-'Celosporium'
+		RFtab$nams[28:30]<-"Unknown Sporormiaceae"
+		RFtab$nams	
+		bacseaRF<<-ggplot(RFtab,aes(y=nams,x=Variable, fill=Abundance))+
+		geom_tile(size=1)+coord_equal()+
+		scale_fill_gradient2("Log Abundance",low=pal2[5],mid= "white",
+			midpoint=mean(RFtab$Abundance), high=pal2[17])+labs(x='', y='')+
+        	theme(axis.text.x=element_text(angle=90, hjust=1,size=18, color="black"),axis.line=element_blank(),
+			legend.text=element_text(size=18),axis.text.y=element_text(size=12, color='black'),
+			plot.margin=unit(c(0,0,0,0), "cm"),panel.grid.major=element_blank(), 
+			panel.grid.minor=element_blank(),panel.background=element_blank())
+		
+
+		bacseaRF
+
+
+RFfun(filtfun, "Season", 20,2000)
+		
+
+		RFtab<-outtab
+		RFtab$Variable<-factor(RFtab$Variable, levels=c("Vegetative", "Veraison", "Post-Harvest"))
+		RFtab$Variable<-factor(RFtab$Variable, labels=c("Bloom", "Veraison", "Post-Harvest"))
+		funseaRF<<-ggplot(RFtab,aes(y=nams,x=Variable, fill=Abundance))+
+		geom_tile(size=1)+coord_equal()+coord_flip()+
+		scale_fill_gradient2("Log Abundance",low=pal2[5],mid= "white",
+			midpoint=mean(RFtab$Abundance), high=pal2[17])+labs(x='', y='')+
+        	theme(axis.text.x=element_text(angle=20, hjust=1,size=24, color="black"),axis.line=element_blank(),
+			legend.text=element_text(size=12),axis.text.y=element_text(size=24, color='black'),
+			plot.margin=unit(c(0,0,0,0), "cm"),panel.grid.major=element_blank(), 
+			panel.grid.minor=element_blank(),panel.background=element_blank())
+		
+
+	bacseaRF 
+	
+
+	funseaRF+ggtitle("Log Abundance of the \n Top Fungal Seasonal Biomarkers")+theme(plot.title=element_text(size=28, hjust=0.5), legend.position='bottom')
+	graph_save("funseaRF.tiff")
+	
+
+	RFfun(filtbac, "Year", 10, 600)
+	RFfun(filtfun, "Year", 10,600)
+
+PH<-subset_samples(filtbac, Season=="Post-Harvest")
+PHF<-subset_samples(filtfun, Season=="Post-Harvest")
+PH
+PHF
+	RFfun(PH, "sevbin", 12, 2000)
+		bacconRF<-heat_RF
+	RFfun(PHF, "sevbin", 20, 2000)
+		funconRF<-heat_RF
+
+	bacconRF
+	
+  	funconRF
+	
+
+```
+```{r}
+#Make Graphs
+
+ggarrange(bacconRF)
+	
+ggarrange(bacseaRF, funseaRF,ncol=2, labels=c("A", "B"))
+	
+```
+
+#Core Microbiome 
+
+```{r}
+
+cores<-c("Aureobasidium", "Massilia", "Micrococcus", "Pseudomonas", "Filobasidium", "Acinetobacter", 
+		"Bacillus", "Bacteroides", "Alternaria", "Streptococcus", "Mycosphaerella", "Cladosporium")
+
+filtbacg<-tax_glom(filtbac, "Genus")
+filtfung<-tax_glom(filtfun, "Genus")
+
+filtbacg<-merge_samples(filtbacg, "Tissue")
+filtfung<-merge_samples(filtfung, "Tissue")
+
+filtbacg
+filtfung
+sample_sums(bacorra)
+sample_sums(funorra)
+bacorra<-transform_sample_counts(filtbacg, function(x) x/sum(x))
+funorra<-transform_sample_counts(filtfung, function(x) x/sum(x))
+
+bmelt<-psmelt(bacorra)
+fmelt<-psmelt(funorra)
+
+fmelt$Genus<-str_replace(fmelt$Genus, "g__", "")
+
+bmelts<-bmelt%>%subset(Genus%in%cores)%>%group_by(Genus)%>%summarize(means=mean(Abundance)*100)
+unique(bmelts$Genus)
+
+fmelts<-fmelt%>%subset(Genus%in%cores)%>%group_by(Genus)%>%summarize(means=mean(Abundance)*100)
+unique(fmelts$Genus)
+
+sum(bmelts$means)
+sum(fmelts$means)
+bmelts
+fmelts
+
+
+```
+
+
+
+

@@ -6,9 +6,16 @@ Author: Ella Deyett
 #Get Data
 WD:"/home/ella/Documents/Ella/Aim1/Sap_microbe_frontiersmicrobiology"
 
-Fungal and Bacterial Sap 2016-2018
+#Temporal Dynamics of the Sap Microbiome of Grapevine Under High Pierce’s Disease Pressure
+##Published in Frontiers In Plant Science 2019
+##Poster Presentation for IS-MPMI XVIII Congress in Glasgow Scotland, 2019
 
-#Libraries
+###Abstract 
+Grapevine is a pillar of the California state economy and agricultural identity. This study provides a comprehensive culture-independent microbiome analysis from the sap of grapevine overtime and in a context of a vascular disease. The vascular system plays a key role by transporting nutrient, water and signals throughout the plant. The negative pressure in the xylem conduits, and low oxygen and nutrient content of its sap make it a unique and underexplored microbial environment. We hypothesized that grapevine hosts in its sap, microbes that have a beneficial impact on plant health by protecting against pathogen attack and supporting key biological processes. To address this hypothesis, we chose a vineyard under high Pierce’s disease (PD). PD is caused by the xylem-dwelling pathogenic bacterium Xylella fastidiosa. We selected ten grapevines within this vineyard with a range of disease phenotypes, and monitored them over 2 growing seasons. We sampled each vines at key phenological stages (bloom, veraison, and post-harvest) and used an amplicon metagenomics approach to profile the bacterial (16S -V4) and fungal (ITS) communities of the sap. We identified a core microbiome of the sap composed of seven bacterial (Streptococcus, Micrococcus, Pseudomonas, Bacteroides, Massilia, Acinetobacter and Bacillus) and five fungal (Cladosporium, Mycosphaerella, Alternaria, Aureobasidium, and Filobasidium) taxa that were present throughout the growing season. Overall, the sap microbial makeup collected from canes was more similar to the root microbial profile. Alpha diversity metrics indicated a microbial enrichment at bloom and in vines with moderate PD severity suggesting a host-driven microbial response to environmental cues. Beta diversity metrics demonstrated that disease condition and plant phenology impacted microbial community profiles. Our study identified several potential taxonomic targets with antimicrobial and plant growth promoting capabilities that inhabit the grapevine sap and that should be further tested as potential biological control or biofertilizer agents.
+
+
+
+###Load Libraries
 
 ```{r}
 library(ggplot2)
@@ -41,9 +48,9 @@ library(stringr)
 library(randomForest)
 
 ```
-#Load the Data
 
 
+###Load Data
 ```{r}
 g<-'graphs/MPMIgraphs/'
 #Raw Data
@@ -51,15 +58,15 @@ bacraw<-readRDS("bacraw_ps.rds")
 funraw<-readRDS("funraw_ps.rds")
 summary(sample_data(bacraw))
 summary(sample_data(funraw))
-
-#Post_severity changes
 bmap<-sample_data(bacraw)
 fmap<-sample_data(funraw)
 write.csv(bmap, 'bmap2.24.2018.csv')
 write.csv(fmap, 'fmap2.24.2018.csv')
+```
 
-
-#Change Vine Severity
+#Fix Data Entry Mistakes
+```{r}
+#Change Vine Severity 
 sevchange<-function(x,y,sev){
 	fmap[fmap$Year==x& fmap$RowVine==y,'Severity']<-sev
 	bmap[bmap$Year==x& bmap$RowVine==y,'Severity']<-sev
@@ -83,16 +90,18 @@ bmap[, c("Year", "RowVine", "Severity")]
 sample_data(bacraw)<-bmap
 sample_data(funraw)<-fmap
 
-
+#Save Phyloseq Copyes
 #saveRDS(bacraw, "bacraw_ps.rds")
 #saveRDS(funraw, "funraw_ps.rds")
 
 
-
+#Rename taxanomy colnames
 colnames(tax_table(bacraw))<-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
-
-
+```
 #Filtered Data
+```{r}
+
+# remove samples with too few reads (<500 reads) and singletons and doubletons taxa.
 filtbac<-prune_samples(sample_sums(bacraw)>500, bacraw)
 filtfun<-prune_samples(sample_sums(funraw)>500,funraw)
 filtbac<-prune_taxa(taxa_sums(filtbac)>=3, filtbac)
@@ -108,7 +117,7 @@ filtfun
 filtfun<-core(filtfun,0,(2/length(sample_names(filtfun))))
 
 
-#Bin Severity rating to three categories
+#Bin Severity rating to three categories: Mild, Moderate, Severe
 
 sort(sample_sums(filtbac)) 
 sevbin<-c()
@@ -129,7 +138,8 @@ for(i in 1:length(sf)){
 	if (sf[i]<=2){ sevbinf[i]<-"Mild"}
 	else if (sf[i]>=4){sevbinf[i]<-"Severe"}
 	else {sevbinf[i]<-"Moderate"}}
-
+	
+#Change severity columns to factors and reorder levels
 sample_data(filtfun)$sevbin<-factor(sevbinf, ordered=TRUE, levels=c("Mild", "Moderate", "Severe"))
 sample_data(filtbac)$sevbin<-factor(sevbin, ordered=TRUE, levels=c("Mild", "Moderate", "Severe"))
 sample_data(filtfun)$bi_sev<-factor(bi_sevF, ordered=TRUE, levels=c("Mild", "Severe"))
@@ -198,7 +208,7 @@ xf<-'Xylella'
 filtbacg<-tax_glom(filtbac, "Genus")
 
 ```
-XF Positive analysis
+###XF Positive analysis
 ```{r}
 xf<-subset_taxa(filtbacg, Genus=="Xylella")
 xf_bi<-data.frame(ifelse(sample_sums(xf)>0,1,0))
@@ -242,8 +252,6 @@ table(bmap$Season,bmap$Xf_bi)
 subset(bmap, Season=='Post-Harvest')%>%group_by(sevbin)%>%summarize(n=n())
 
 ```
-#The Real Data
-
 #Figure 1: Xantho Bar Charts
 ```{r}
 
@@ -252,6 +260,7 @@ bacragPh<-subset_samples(filtbac, seasonABV=='PH')
 bacragP<-prune_taxa(taxa_sums(bacragPh)>2, bacragPh)
 
 bacragP
+#Transform to relative abundance 
 bacragPh<-transform_sample_counts(bacragP, function(x) x/sum(x))
 sample_sums(bacragPh)
 
@@ -306,22 +315,24 @@ px<-subset(xff, Genus=="Pseudoxanthomonas")
 
 ```
 
-#Stats on Count of Bacteria
+#Stats on Count of Bacteria: Xylella, Stenotrophomonas and Pseudoxanthomonas
 ```{r}
 
-pairwise.wilcox.test(xf$Abundance, xf$sevbin, p.adjust.method='fdr')
-pairwise.wilcox.test(st$Abundance, st$sevbin, p.adjust.method='fdr')
-pairwise.wilcox.test(px$Abundance, px$sevbin, p.adjust.method='fdr')
-
+#Kruskal 
 kruskal.test(Abundance~sevbin, data=xf)
 
 kruskal.test(Abundance~sevbin, data=px)
 kruskal.test(Abundance~sevbin, data=st)
 kruskal.test(Abundance~bi_sev, data=xff)
 
+#Pairwise Wilcox
+pairwise.wilcox.test(xf$Abundance, xf$sevbin, p.adjust.method='fdr')
+pairwise.wilcox.test(st$Abundance, st$sevbin, p.adjust.method='fdr')
+pairwise.wilcox.test(px$Abundance, px$sevbin, p.adjust.method='fdr')
+
+
+
 #Incidence 
-
-
 mycomp<-list(c("High", "Low"), c("High", "Med"), c("Med", "Low"))
 a<-ggplot(holybXFs, aes(x=Genus, y=mean, fill=sevbin))+
 	geom_bar(stat='identity', position=position_dodge(width=1))+
@@ -360,8 +371,7 @@ grid.arrange(a,b, ncol=2)
 
 ```
 
-#Alpha Diversity 
-#Num Genera 
+#Alpha Diversity: Based On Observed Number Of Taxa
 
 ```{r}
 
@@ -370,6 +380,8 @@ numgenF<-tax_glom(filtfun,"Family")
 fmap<-data.frame(sample_data(filtfun))
 bmap<-data.frame(sample_data(filtbac))
 
+
+#Estimate Richness
 numgenB<-estimate_richness(numgenB, measures="Observed")
 numgenB<-cbind(bmap, numgenB)
 numgenF<-estimate_richness(numgenF, measures="Observed")
@@ -379,24 +391,28 @@ numgenF<-cbind(fmap,numgenF)
 
 
 set.seed(52)
-#Bacterial Tukey 
+
+#Poisson GLM for count data statistics : Bacteria
 tf<-glm(Observed~RowVine+timepoints, family=poisson, data=numgenB)
 
 tc<-glm(Observed~RowVine+sevbin, family=poisson, data=numgenB)
 summary(tf)
 summary(tc)
 
+# Post-hoc Tukey: Bacteria
 bsum<-summary(glht(tf, linfct=mcp(timepoints="Tukey")))
 
 bconsum<-summary(glht(tc,linfct=mcp(sevbin="Tukey")))
 bconsum
 bsum
 
-#Fungal Tukey
+#Poisson GLM for count data statistics : Fungal
 
 tfF<-glm(Observed~RowVine+timepoints,family=poisson, data=numgenF)
 anova(tfF)
 tfcon<-glm(Observed~RowVine+sevbin, family=poisson, data=numgenF)
+
+# Post-hoc Tukey: Fungal
 Fsum<-summary(glht(tfF, linfct=mcp(timepoints="Tukey")))
   
 Fconsum<-summary(glht(tfcon, linfct=mcp(sevbin="Tukey")))
@@ -577,11 +593,9 @@ Fsum
 
 ```
 
-
-
 #Core microbiome 
-#Persistance: Taxa shared over time within and across Communities 
-#Venn Diagrams 	
+##Persistance: Taxa shared over time within and across Communities 
+##Venn Diagrams 	
 ```{r}
 
 
@@ -592,10 +606,8 @@ g_fun<-tax_glom(filtfun, "Genus")
 
 ```
 
-
+##Venn for Condition
 ```{r}
-#Venn for Condition
-
 vennfunCon<-function(psg, titles){    
 ph<-subset_samples(psg,  sevbin=="Severe")
 veg<-subset_samples(psg, sevbin=="Moderate")
@@ -743,6 +755,8 @@ mydata=sta2
 sta2<-data.frame(sta2)
 colnames(sta2)
 head(sta2)
+
+#Create Auxillary Lollipop graphs for Upset
 myplot<-function(mydata,x,y){
 
 mydata2<-mydata%>%subset(fac=="High")
@@ -783,12 +797,14 @@ plot<-grid.arrange(arrangeGrob(high, low, widths=c(1,3)))
 Bcols<-brewer.pal(9, "RdYlGn")
 show_col(Bcols)
 
+#Upset Graph
 
 gen<-str_replace(sta2$Genus, pattern='g__', replacement='')
 gen
 sta2$Genus<-gen
 
 ppi<-600
+
 
 upcon<-upset(sta2, main.bar.color = "black",point.size=3.5,order.by='freq',
 	text.scale=c(2.2,2.2,2,2,2.2,2),
@@ -810,10 +826,9 @@ grid.text("Disease Prevalence Venn Diagram and Relative Abundance of Genera", x=
 ```
 
 
-#lets get Upset
+#Upset Graph Season
 
 ```{r}
-#Season
 
 #Venn for Season
 vennfun<-function(psg, thresh){    
@@ -950,7 +965,7 @@ upset(sta2, main.bar.color = "black",point.size=3.5,order.by='freq',
 ```
 
 
-#BetaDiv
+#Beta Diberity: Weighted Unifrac PCoA (Bac) , Bray-Curtis NMDS (Fun)
 
 ```{r}
 filtbac
@@ -970,6 +985,8 @@ pal<-viridis_pal(option='D')(10)
 pal2<-c(pal, viridis_pal(option='B')(10))
 
 show_col(pal2)
+
+#Bacteria beta diversity Plot 
 bacbeta<-plot_ordination(filtbac2, Wunifr,color="Year")+   
 	geom_point(mapping=aes(shape=Season), size=8)+
 	scale_shape_manual("Season",values=c(17,10,3),labels=c("Post-Harvest", "Bloom", "Veraison"))+
@@ -983,7 +1000,7 @@ bacbeta<-plot_ordination(filtbac2, Wunifr,color="Year")+
 		text=element_text(size=24), plot.title=element_text(size=24))+
 		ggtitle("Beta Diversity: Weighted Unifrac PCoA \n of Bacteria  and Bray-Curtis NMDS of Fungi")
 
-
+#Fungal Beta diversity Plot 
 funbeta<-plot_ordination(filtfun2, brayf, color="Year")+
 	geom_point(mapping=aes(shape=Season), size=8)+
 	scale_shape_manual("Season",values=c(17,10,3), labels=c("Post-Harvest", "Bloom", "Veraison"))+
@@ -1011,6 +1028,7 @@ filtfunbray<-phyloseq::distance(filtfun2, method='bray')
 bacmap<-data.frame(sample_data(filtbac2))
 funmap<-data.frame(sample_data(filtfun2))
 
+#Adonis 
 adonis(filtbacW~timepoints, data=bacmap, method='unifrac', strata=bacmap$RowVine)
 set.seed(52)
 adonis(filtbacW~Season, data=bacmap, method='unifrac', strata=bacmap$RowVine)
@@ -1166,6 +1184,8 @@ colnames(maps)
 set.seed(45)
 
 sample_data(bacragPh3)$Severity<-as.numeric(sample_data(bacragPh3)$Severity)
+
+#Plots
 bacbetaSep<-  
        plot_ordination(bacragPh3, wuni)+ 
 	geom_path(aes(group=RowVine),size=.7,color='black',alpha=0.25,show.legend=FALSE)+
@@ -1250,10 +1270,7 @@ ggarrange(bacbetaAll,funbetaAll,common.legend=TRUE, nrow=2,legend='right')
 
 ```
 #Conditional Changes 
-
-
-
-#Random Forest
+##Random Forest
 ```{r}
 
 set.seed(24)
@@ -1393,9 +1410,6 @@ PHF
 	
   	funconRF
 	
-
-```
-```{r}
 #Make Graphs
 
 ggarrange(bacconRF)
@@ -1421,12 +1435,16 @@ filtbacg
 filtfung
 sample_sums(bacorra)
 sample_sums(funorra)
+
+#Transfrom Relative Abundance 
 bacorra<-transform_sample_counts(filtbacg, function(x) x/sum(x))
 funorra<-transform_sample_counts(filtfung, function(x) x/sum(x))
 
+#Melt to Dataframe
 bmelt<-psmelt(bacorra)
 fmelt<-psmelt(funorra)
 
+#Clean up genera name
 fmelt$Genus<-str_replace(fmelt$Genus, "g__", "")
 
 bmelts<-bmelt%>%subset(Genus%in%cores)%>%group_by(Genus)%>%summarize(means=mean(Abundance)*100)
